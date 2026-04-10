@@ -9,6 +9,7 @@ import (
 )
 
 var strictSanitizer = bluemonday.StrictPolicy()
+var space = regexp.MustCompile(`\s+`)
 
 func IsValidEmail(email string) bool {
 	_, err := mail.ParseAddress(email)
@@ -69,4 +70,22 @@ func SanitizeUntrustedText(s string, maxLen int) string {
 		s = s[:maxLen]
 	}
 	return s
+}
+
+func CleanString(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.ToLower(s)
+
+	s = space.ReplaceAllString(s, " ")
+	return s
+}
+
+func IsSuspicious(path string) bool {
+	path = strings.ToLower(path)
+	for _, p := range SuspiciousPaths {
+		if strings.Contains(path, strings.ToLower(p)) {
+			return true
+		}
+	}
+	return false
 }
