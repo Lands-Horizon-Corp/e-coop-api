@@ -4,6 +4,8 @@ DB_NAME=core
 MIGRATION_NAME=${1:-}
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+DB_DIR=$( cd -- "$SCRIPT_DIR/.." &> /dev/null && pwd )
+ATLAS_CONFIG="file://$DB_DIR/atlas.hcl"
 
 # Reset the shadow database
 encore db reset --shadow $DB_NAME
@@ -13,4 +15,5 @@ encore db reset --shadow $DB_NAME
 export ENCORERUNTIME_NOPANIC=1
 
 # Generate the migration
-atlas migrate diff $MIGRATION_NAME --env local --dev-url "$(encore db conn-uri --shadow $DB_NAME)&search_path=public"
+cd "$DB_DIR"
+atlas migrate diff "$MIGRATION_NAME" --env local --config "$ATLAS_CONFIG" --dev-url "$(encore db conn-uri --shadow $DB_NAME)&search_path=public"
