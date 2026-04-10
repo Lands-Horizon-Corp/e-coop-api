@@ -1,3 +1,6 @@
+// Package helpers provides utilities for extracting standardized request information
+// such as client IP, device type, location, and fingerprinting for rate limiting,
+// idempotency, and logging purposes.
 package helpers
 
 import (
@@ -16,6 +19,7 @@ import (
 )
 
 type DeviceType string
+
 type DeviceOS string
 
 const (
@@ -37,34 +41,36 @@ const (
 )
 
 type DeviceInfo struct {
-	Type DeviceType
-	OS   DeviceOS
+	Type DeviceType `json:"type"`
+	OS   DeviceOS   `json:"os"`
 }
 
 type Location struct {
-	Timezone  string
-	Latitude  float64
-	Longitude float64
-	Valid     bool
+	Timezone  string  `json:"timezone"`
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+	Valid     bool    `json:"valid"`
 }
 
 type RequestInfo struct {
-	ID             string
-	Host           string
-	Path           string
-	ClientIP       string
-	UserAgent      string
-	IsSecure       bool
-	Protocol       string
-	AcceptLanguage []string
-	RequestID      string
-	IdempotencyKey string
-	RequestHash    string
-	Device         DeviceInfo
-	Location       Location
+	ID             string     `json:"id"`
+	Host           string     `json:"host"`
+	Path           string     `json:"path"`
+	ClientIP       string     `json:"client_ip"`
+	UserAgent      string     `json:"user_agent"`
+	IsSecure       bool       `json:"is_secure"`
+	Protocol       string     `json:"protocol"`
+	AcceptLanguage []string   `json:"accept_language"`
+	RequestID      string     `json:"request_id"`
+	IdempotencyKey string     `json:"idempotency_key"`
+	Device         DeviceInfo `json:"device"`
+	Location       Location   `json:"location"`
 }
 
 func GetRequestInfo(r *http.Request) RequestInfo {
+	if r == nil {
+		return RequestInfo{}
+	}
 	info := RequestInfo{
 		Host:           GetHost(r),
 		Path:           GetPath(r),
@@ -78,8 +84,6 @@ func GetRequestInfo(r *http.Request) RequestInfo {
 		Device:         GetDeviceInfo(r),
 		Location:       GetLocation(r),
 	}
-	// Use device fingerprint as ID for better rate limiting/idempotency
-	// Resistant to VPN bypass and proxy changes
 	info.ID = GetFingerprint(r)
 	return info
 }
@@ -100,11 +104,12 @@ func GetHost(r *http.Request) string {
 		"Forwarded",
 	}
 	for _, h := range hostHeaders {
-		if host := r.Header.Get(h); host != "" {
-			parts := strings.Split(host, ",")
+		if val := r.Header.Get(h); val != "" {
+			parts := strings.Split(val, ",")
 			return strings.TrimSpace(parts[0])
 		}
 	}
+
 	urlHeaders := []string{"Origin", "Referer"}
 	for _, h := range urlHeaders {
 		if val := r.Header.Get(h); val != "" {
@@ -120,23 +125,14 @@ func GetClientIP(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
+
 	if forwarded := r.Header.Get("Forwarded"); forwarded != "" {
-		parts := strings.Split(forwarded, ";")
-		for _, part := range parts {
-			part = strings.TrimSpace(part)
-			if strings.HasPrefix(part, "for=") {
-				ip := strings.TrimPrefix(part, "for=")
-				ip = strings.Trim(ip, "\"")
-				if strings.HasPrefix(ip, "[") && strings.Contains(ip, "]") {
-					ip = strings.TrimSuffix(strings.TrimPrefix(ip, "["), "]")
-				}
-				if net.ParseIP(ip) != nil {
-					return ip
-				}
-			}
+		if ip := parseForwardedForIP(forwarded); ip != "" {
+			return ip
 		}
 	}
-	headers := []string{
+
+	ipHeaders := []string{
 		"CF-Connecting-IP",
 		"True-Client-IP",
 		"Fly-Client-IP",
@@ -148,22 +144,40 @@ func GetClientIP(r *http.Request) string {
 		"Fastly-Client-IP",
 		"Forwarded-For",
 	}
-	for _, header := range headers {
-		if ip := r.Header.Get(header); ip != "" {
-			for _, candidate := range strings.Split(ip, ",") {
-				trimmed := strings.TrimSpace(candidate)
-				if trimmed != "" && net.ParseIP(trimmed) != nil {
-					return trimmed
+	for _, header := range ipHeaders {
+		if val := r.Header.Get(header); val != "" {
+			// Multiple IPs may be present (e.g., X-Forwarded-For)
+			for candidate := range strings.SplitSeq(val, ",") {
+				if ip := strings.TrimSpace(candidate); ip != "" && net.ParseIP(ip) != nil {
+					return ip
 				}
 			}
 		}
 	}
-	if ip := r.RemoteAddr; ip != "" {
-		host, _, err := net.SplitHostPort(ip)
+	if r.RemoteAddr != "" {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
-			return ip
+			return r.RemoteAddr
 		}
 		return host
+	}
+	return ""
+}
+
+func parseForwardedForIP(forwarded string) string {
+	parts := strings.SplitSeq(forwarded, ";")
+	for part := range parts {
+		part = strings.TrimSpace(part)
+		if after, ok := strings.CutPrefix(part, "for="); ok {
+			ip := after
+			ip = strings.Trim(ip, "\"")
+			if strings.HasPrefix(ip, "[") && strings.Contains(ip, "]") {
+				ip = strings.TrimSuffix(strings.TrimPrefix(ip, "["), "]")
+			}
+			if net.ParseIP(ip) != nil {
+				return ip
+			}
+		}
 	}
 	return ""
 }
@@ -172,15 +186,15 @@ func GetProtocol(r *http.Request) string {
 	if r == nil {
 		return "http"
 	}
-	// RFC 7239: Forwarded header (standard format)
 	if forwarded := r.Header.Get("Forwarded"); forwarded != "" {
-		parts := strings.Split(forwarded, ";")
-		for _, part := range parts {
+		parts := strings.SplitSeq(forwarded, ";")
+		for part := range parts {
 			part = strings.TrimSpace(part)
-			if strings.HasPrefix(part, "proto=") {
-				proto := strings.TrimPrefix(part, "proto=")
+			if after, ok := strings.CutPrefix(part, "proto="); ok {
+				proto := after
 				proto = strings.Trim(proto, "\"")
-				if proto = strings.ToLower(strings.TrimSpace(proto)); proto == "https" || proto == "http" {
+				proto = strings.ToLower(strings.TrimSpace(proto))
+				if proto == "https" || proto == "http" {
 					return proto
 				}
 			}
@@ -235,9 +249,11 @@ func GetPath(r *http.Request) string {
 		}
 		return r
 	}, path)
+	// Ensure leading slash
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
+	// Remove double slashes
 	for strings.Contains(path, "//") {
 		path = strings.ReplaceAll(path, "//", "/")
 	}
@@ -252,12 +268,10 @@ func GetAcceptLanguage(r *http.Request) []string {
 	if header == "" {
 		return nil
 	}
-
 	type langQ struct {
 		lang string
 		q    float64
 	}
-
 	parts := strings.Split(header, ",")
 	langs := make([]langQ, 0, len(parts))
 	for _, part := range parts {
@@ -272,14 +286,13 @@ func GetAcceptLanguage(r *http.Request) []string {
 		}
 		q := 1.0
 		if len(segments) == 2 {
-			qStr := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(segments[1]), "q="))
+			qStr := strings.TrimSpace(strings.TrimPrefix(segments[1], "q="))
 			if parsed, err := strconv.ParseFloat(qStr, 64); err == nil {
 				q = parsed
 			}
 		}
 		langs = append(langs, langQ{lang: lang, q: q})
 	}
-
 	sort.SliceStable(langs, func(i, j int) bool {
 		return langs[i].q > langs[j].q
 	})
@@ -295,9 +308,13 @@ func GetRequestID(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	// Check both prefixed (X-) and non-prefixed variants
-	for _, header := range []string{"X-Request-ID", "Request-ID", "X-Correlation-ID", "Correlation-ID", "X-Trace-ID", "Trace-ID"} {
-		if val := strings.TrimSpace(r.Header.Get(header)); val != "" {
+	headers := []string{
+		"X-Request-ID", "Request-ID",
+		"X-Correlation-ID", "Correlation-ID",
+		"X-Trace-ID", "Trace-ID",
+	}
+	for _, h := range headers {
+		if val := strings.TrimSpace(r.Header.Get(h)); val != "" {
 			return val
 		}
 	}
@@ -313,7 +330,6 @@ func ValidateIdempotencyKey(r *http.Request) (string, error) {
 	if r == nil {
 		return "", nil
 	}
-	// Check both prefixed and non-prefixed variants
 	var val string
 	for _, header := range []string{"X-Idempotency-Key", "Idempotency-Key"} {
 		if v := strings.TrimSpace(r.Header.Get(header)); v != "" {
@@ -357,7 +373,11 @@ func GetDeviceInfo(r *http.Request) DeviceInfo {
 	if ua == "" {
 		return DeviceInfo{Type: DeviceUnknown, OS: OSUnknown}
 	}
-	botSignals := []string{"bot", "crawler", "spider", "slurp", "facebookexternalhit", "googlebot", "bingbot", "yandex", "duckduckbot", "baidu", "sogou", "exabot", "curl", "wget", "python-requests", "go-http-client"}
+	botSignals := []string{
+		"bot", "crawler", "spider", "slurp", "facebookexternalhit",
+		"googlebot", "bingbot", "yandex", "duckduckbot", "baidu",
+		"sogou", "exabot", "curl", "wget", "python-requests", "go-http-client",
+	}
 	for _, sig := range botSignals {
 		if strings.Contains(ua, sig) {
 			return DeviceInfo{Type: DeviceBot, OS: OSUnknown}
@@ -366,8 +386,9 @@ func GetDeviceInfo(r *http.Request) DeviceInfo {
 	os := getOSFromUA(ua)
 	var deviceType DeviceType
 	switch {
-	case strings.Contains(ua, "tablet") || strings.Contains(ua, "ipad") ||
-		(strings.Contains(ua, "android") && !strings.Contains(ua, "mobile")):
+	case strings.Contains(ua, "tablet") || strings.Contains(ua, "ipad"):
+		deviceType = DeviceTablet
+	case strings.Contains(ua, "android") && !strings.Contains(ua, "mobile"):
 		deviceType = DeviceTablet
 	case strings.Contains(ua, "mobile") || strings.Contains(ua, "iphone") ||
 		strings.Contains(ua, "ipod") || strings.Contains(ua, "blackberry") ||
@@ -384,13 +405,13 @@ func getOSFromUA(ua string) DeviceOS {
 	switch {
 	case strings.Contains(ua, "android"):
 		return OSAndroid
-	case strings.Contains(ua, "iphone") || strings.Contains(ua, "ipad") || strings.Contains(ua, "ipod"):
+	case strings.Contains(ua, "iphone"), strings.Contains(ua, "ipad"), strings.Contains(ua, "ipod"):
 		return OSIOS
 	case strings.Contains(ua, "cros"):
 		return OSChromeOS
 	case strings.Contains(ua, "windows"):
 		return OSWindows
-	case strings.Contains(ua, "macintosh") || strings.Contains(ua, "mac os x"):
+	case strings.Contains(ua, "macintosh"), strings.Contains(ua, "mac os x"):
 		return OSMacOS
 	case strings.Contains(ua, "linux"):
 		return OSLinux
@@ -404,31 +425,22 @@ func GetLocation(r *http.Request) Location {
 		return Location{Timezone: "UTC", Valid: true}
 	}
 	timezoneHeaders := []string{
-		"X-Timezone",
-		"X-TZ",
-		"X-User-Timezone",
-		"X-Client-Timezone",
-		"CF-Timezone-ID",
-		"X-Forwarded-Timezone",
+		"X-Timezone", "X-TZ", "X-User-Timezone",
+		"X-Client-Timezone", "CF-Timezone-ID", "X-Forwarded-Timezone",
 	}
-	timezone := ""
+	timezone := "UTC"
 	for _, header := range timezoneHeaders {
 		if tz := strings.TrimSpace(r.Header.Get(header)); tz != "" {
 			timezone = tz
 			break
 		}
 	}
-	if timezone == "" {
-		timezone = "UTC"
-	}
 	_, err := time.LoadLocation(timezone)
 	valid := err == nil
-	lat := getCoordinate(r, "X-Latitude", "Latitude")
-	lng := getCoordinate(r, "X-Longitude", "Longitude")
 	return Location{
 		Timezone:  timezone,
-		Latitude:  lat,
-		Longitude: lng,
+		Latitude:  getCoordinate(r, "X-Latitude", "Latitude"),
+		Longitude: getCoordinate(r, "X-Longitude", "Longitude"),
 		Valid:     valid,
 	}
 }
@@ -453,25 +465,26 @@ func GetFingerprint(r *http.Request) string {
 	}
 	device := GetDeviceInfo(r)
 	location := GetLocation(r)
-	langStr := strings.Join(GetAcceptLanguage(r), "|")
-	acceptTypes := []string{
-		r.Header.Get("Accept"),
-		r.Header.Get("Accept-Encoding"),
-		r.Header.Get("Accept-Charset"),
-	}
-	acceptStr := strings.Join(acceptTypes, "|")
-	fingerprint := strings.Join([]string{
+	parts := []string{
 		string(device.Type),
 		string(device.OS),
 		r.UserAgent(),
-		langStr,
+		strings.Join(GetAcceptLanguage(r), "|"),
 		location.Timezone,
-		acceptStr,
+		buildAcceptString(r),
 		GetClientIP(r),
 		r.Method,
 		GetPath(r),
 		GetRequestID(r),
 		GetIdempotencyKey(r),
-	}, "|")
-	return HashRequestKey(fingerprint)
+	}
+	return HashRequestKey(strings.Join(parts, "|"))
+}
+func buildAcceptString(r *http.Request) string {
+	acceptTypes := []string{
+		r.Header.Get("Accept"),
+		r.Header.Get("Accept-Encoding"),
+		r.Header.Get("Accept-Charset"),
+	}
+	return strings.Join(acceptTypes, "|")
 }
