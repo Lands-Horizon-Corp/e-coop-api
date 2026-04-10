@@ -1,0 +1,8 @@
+# Ignore everything
+*
+
+# Allow .gitignore itself
+!.gitignore
+
+# Allow all .sql files
+!*.sql
