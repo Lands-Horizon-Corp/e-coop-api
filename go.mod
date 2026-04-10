@@ -3,6 +3,8 @@ module encore.app
 go 1.26.1
 
 require (
+	ariga.io/atlas-provider-gorm v0.6.0
+	encore.dev v1.52.1
 	github.com/Lands-Horizon-Corp/numi18n v1.3.0
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.12.3
@@ -11,13 +13,12 @@ require (
 	github.com/xuri/excelize/v2 v2.10.1
 	golang.org/x/text v0.36.0
 	gorm.io/datatypes v1.2.7
+	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.1
 )
 
 require (
 	ariga.io/atlas v0.36.2-0.20250806044935-5bb51a0a956e // indirect
-	ariga.io/atlas-go-sdk v0.7.2 // indirect
-	ariga.io/atlas-provider-gorm v0.6.0 // indirect
 	cel.dev/expr v0.24.0 // indirect
 	cloud.google.com/go v0.121.6 // indirect
 	cloud.google.com/go/auth v0.16.4 // indirect
@@ -27,7 +28,6 @@ require (
 	cloud.google.com/go/longrunning v0.6.7 // indirect
 	cloud.google.com/go/monitoring v1.24.2 // indirect
 	cloud.google.com/go/spanner v1.84.1 // indirect
-	encore.dev v1.52.1 // indirect
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/GoogleCloudPlatform/grpc-gcp-go/grpcgcp v1.5.3 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.29.0 // indirect
@@ -91,7 +91,6 @@ require (
 	google.golang.org/grpc v1.74.2 // indirect
 	google.golang.org/protobuf v1.36.7 // indirect
 	gorm.io/driver/mysql v1.6.0 // indirect
-	gorm.io/driver/postgres v1.6.0 // indirect
 	gorm.io/driver/sqlite v1.6.0 // indirect
 	gorm.io/driver/sqlserver v1.6.0 // indirect
 )
