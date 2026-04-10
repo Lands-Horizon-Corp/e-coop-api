@@ -8,6 +8,8 @@ import (
 	"github.com/microcosm-cc/bluemonday"
 )
 
+var strictSanitizer = bluemonday.StrictPolicy()
+
 func IsValidEmail(email string) bool {
 	_, err := mail.ParseAddress(email)
 	return err == nil
@@ -44,4 +46,27 @@ func Sanitize(input string) string {
 
 func IsValidPhoneNumber(phone string) bool {
 	return regexp.MustCompile(`^\+?(?:\d{1,4})?\d{7,14}$`).MatchString(phone)
+}
+
+func SanitizeUntrustedText(s string, maxLen int) string {
+	if s == "" {
+		return ""
+	}
+	if maxLen > 0 && len(s) > maxLen {
+		s = s[:maxLen]
+	}
+	s = strings.ReplaceAll(s, "\x00", "")
+	s = strictSanitizer.Sanitize(s)
+	s = strings.Map(func(r rune) rune {
+		if r < 32 || r == 127 {
+			return -1
+		}
+		return r
+	}, s)
+	s = strings.TrimSpace(s)
+	s = strings.Join(strings.Fields(s), " ")
+	if maxLen > 0 && len(s) > maxLen {
+		s = s[:maxLen]
+	}
+	return s
 }

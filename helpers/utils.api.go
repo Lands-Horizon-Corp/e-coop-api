@@ -93,7 +93,7 @@ func GetHost(r *http.Request) string {
 		return ""
 	}
 	if r.Host != "" {
-		return strings.TrimSpace(r.Host)
+		return SanitizeUntrustedText(r.Host, 255)
 	}
 	hostHeaders := []string{
 		"X-Forwarded-Host",
@@ -106,7 +106,7 @@ func GetHost(r *http.Request) string {
 	for _, h := range hostHeaders {
 		if val := r.Header.Get(h); val != "" {
 			parts := strings.Split(val, ",")
-			return strings.TrimSpace(parts[0])
+			return SanitizeUntrustedText(parts[0], 255)
 		}
 	}
 
@@ -114,7 +114,7 @@ func GetHost(r *http.Request) string {
 	for _, h := range urlHeaders {
 		if val := r.Header.Get(h); val != "" {
 			if u, err := url.Parse(val); err == nil && u.Host != "" {
-				return u.Host
+				return SanitizeUntrustedText(u.Host, 255)
 			}
 		}
 	}
@@ -131,7 +131,6 @@ func GetClientIP(r *http.Request) string {
 			return ip
 		}
 	}
-
 	ipHeaders := []string{
 		"CF-Connecting-IP",
 		"True-Client-IP",
@@ -146,7 +145,6 @@ func GetClientIP(r *http.Request) string {
 	}
 	for _, header := range ipHeaders {
 		if val := r.Header.Get(header); val != "" {
-			// Multiple IPs may be present (e.g., X-Forwarded-For)
 			for candidate := range strings.SplitSeq(val, ",") {
 				if ip := strings.TrimSpace(candidate); ip != "" && net.ParseIP(ip) != nil {
 					return ip
@@ -217,18 +215,7 @@ func GetUserAgent(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	ua := r.UserAgent()
-	if len(ua) > 512 {
-		ua = ua[:512]
-	}
-	ua = strings.ReplaceAll(ua, "\x00", "")
-	ua = strings.Map(func(r rune) rune {
-		if r < 32 || r == 127 {
-			return -1
-		}
-		return r
-	}, ua)
-	return strings.TrimSpace(ua)
+	return SanitizeUntrustedText(r.UserAgent(), 512)
 }
 
 func GetPath(r *http.Request) string {
@@ -239,21 +226,13 @@ func GetPath(r *http.Request) string {
 	if path == "" {
 		return "/"
 	}
-	if len(path) > 2048 {
-		path = path[:2048]
+	path = SanitizeUntrustedText(path, 2048)
+	if path == "" {
+		return "/"
 	}
-	path = strings.ReplaceAll(path, "\x00", "")
-	path = strings.Map(func(r rune) rune {
-		if r < 32 || r == 127 {
-			return -1
-		}
-		return r
-	}, path)
-	// Ensure leading slash
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	// Remove double slashes
 	for strings.Contains(path, "//") {
 		path = strings.ReplaceAll(path, "//", "/")
 	}
@@ -315,7 +294,7 @@ func GetRequestID(r *http.Request) string {
 	}
 	for _, h := range headers {
 		if val := strings.TrimSpace(r.Header.Get(h)); val != "" {
-			return val
+			return SanitizeUntrustedText(val, 256)
 		}
 	}
 	return ""
@@ -349,13 +328,20 @@ func ValidateIdempotencyKey(r *http.Request) (string, error) {
 func HashRequestKey(parts ...string) string {
 	h := sha256.New()
 	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		p = strings.ToLower(p)
-		p = strings.Join(strings.Fields(p), " ")
+		p = sanitizeHashPart(p)
+		if p == "" {
+			continue
+		}
 		h.Write([]byte(p))
 		h.Write([]byte("|"))
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+func sanitizeHashPart(s string) string {
+	s = SanitizeUntrustedText(s, 4096)
+	s = strings.ToLower(s)
+	return SanitizeUntrustedText(s, 256)
 }
 
 func GetDeviceInfo(r *http.Request) DeviceInfo {
@@ -468,7 +454,7 @@ func GetFingerprint(r *http.Request) string {
 	parts := []string{
 		string(device.Type),
 		string(device.OS),
-		r.UserAgent(),
+		GetUserAgent(r),
 		strings.Join(GetAcceptLanguage(r), "|"),
 		location.Timezone,
 		buildAcceptString(r),
@@ -478,13 +464,13 @@ func GetFingerprint(r *http.Request) string {
 		GetRequestID(r),
 		GetIdempotencyKey(r),
 	}
-	return HashRequestKey(strings.Join(parts, "|"))
+	return HashRequestKey(parts...)
 }
 func buildAcceptString(r *http.Request) string {
 	acceptTypes := []string{
-		r.Header.Get("Accept"),
-		r.Header.Get("Accept-Encoding"),
-		r.Header.Get("Accept-Charset"),
+		SanitizeUntrustedText(r.Header.Get("Accept"), 256),
+		SanitizeUntrustedText(r.Header.Get("Accept-Encoding"), 128),
+		SanitizeUntrustedText(r.Header.Get("Accept-Charset"), 128),
 	}
 	return strings.Join(acceptTypes, "|")
 }
