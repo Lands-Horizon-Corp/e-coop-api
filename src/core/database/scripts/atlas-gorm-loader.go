@@ -7,7 +7,7 @@ import (
 
 	_ "ariga.io/atlas-go-sdk/recordriver"
 	"ariga.io/atlas-provider-gorm/gormschema"
-	"encore.app/src/core/models"
+	"encore.app/src/core/database/models"
 )
 
 var Model = []any{
