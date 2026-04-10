@@ -445,6 +445,17 @@ func getCoordinate(r *http.Request, headers ...string) float64 {
 	return 0
 }
 
+// GetRequestTraceKey returns a per-request correlation key that may vary by request headers.
+// Use for logging/tracing, not for stable rate limiting.
+func GetRequestTraceKey(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	return HashRequestKey(GetFingerprint(r), GetRequestID(r), GetIdempotencyKey(r))
+}
+
+// GetFingerprint builds a stable fingerprint for abuse/rate-limit controls.
+// Deliberately excludes RequestID/IdempotencyKey because they can change per retry/request.
 func GetFingerprint(r *http.Request) string {
 	if r == nil {
 		return ""
@@ -461,8 +472,6 @@ func GetFingerprint(r *http.Request) string {
 		GetClientIP(r),
 		r.Method,
 		GetPath(r),
-		GetRequestID(r),
-		GetIdempotencyKey(r),
 	}
 	return HashRequestKey(parts...)
 }
